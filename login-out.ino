@@ -60,7 +60,7 @@ void setup() {
 
 String request_line;
 bool cardSetupMode = false;
-// "w:0:system_name:w:12345678:sectorpwd"
+// "w:0:system_name:w:a1b2c3d4:sectorpwd"
 
 void loop() {
 
@@ -272,7 +272,7 @@ void cardRead() {
 
           success = nfc.mifareclassic_ReadDataBlock(7, data);
           if (success) {
-            Serial.println("Reading Block 7:");
+            Serial.println(F("Reading Block 7:"));
             nfc.PrintHexChar(data, 16);
             Serial.println("");
           } else {
@@ -316,7 +316,7 @@ void cardWrite() {
         String passwd = getValue(request_line,':',1);
         String newSectorPasswd = getValue(request_line,':',2);
         #ifdef DEBUG
-          Serial.print("password:");
+          Serial.print(F("password:"));
           Serial.println(passwd);
         #endif
         uint8_t data[16];
@@ -383,7 +383,7 @@ void cardWrite() {
               int eeAddress = idx * sizeof(LoginParams);
               EEPROM.put(eeAddress, params);
             } else {
-              Serial.print("Unable to write trailer block of sector");
+              Serial.print(F("Unable to write trailer block of sector"));
             }
           }  
         }
@@ -481,9 +481,9 @@ void dumpMemory() {
   success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
   if (success) {
     // Display some basic information about the card
-    Serial.println("Found an ISO14443A card");
-    Serial.print("  UID Length: ");Serial.print(uidLength, DEC);Serial.println(" bytes");
-    Serial.print("  UID Value: ");
+    Serial.println(F("Found an ISO14443A card"));
+    Serial.print(F("  UID Length: "));Serial.print(uidLength, DEC);Serial.println(F(" bytes"));
+    Serial.print(F("  UID Value: "));
     for (uint8_t i = 0; i < uidLength; i++) {
       Serial.print(uid[i], HEX);
       Serial.print(' ');
@@ -504,7 +504,7 @@ void dumpMemory() {
         if (!authenticated)
         {
           // Starting of a new sector ... try to to authenticate
-          Serial.print("------------------------Sector ");Serial.print(currentblock/4, DEC);Serial.println("-------------------------");
+          Serial.print(F("------------------------Sector "));Serial.print(currentblock/4, DEC);Serial.println(F("-------------------------"));
           if (currentblock == 0)
           {
               // This will be 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF for Mifare Classic (non-NDEF!)
@@ -525,14 +525,14 @@ void dumpMemory() {
           }
           else
           {
-            Serial.println("Authentication error");
+            Serial.println(F("Authentication error"));
             success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength); //WORKAROUND
           }
         }
         // If we're still not authenticated just skip the block
         if (!authenticated)
         {
-          Serial.print("Block ");Serial.print(currentblock, DEC);Serial.println(" unable to authenticate");
+          Serial.print(F("Block "));Serial.print(currentblock, DEC);Serial.println(F(" unable to authenticate"));
         }
         else
         {
@@ -542,7 +542,7 @@ void dumpMemory() {
           if (success)
           {
             // Read successful
-            Serial.print("Block ");Serial.print(currentblock, DEC);
+            Serial.print(F("Block "));Serial.print(currentblock, DEC);
             if (currentblock < 10)
             {
               Serial.print("  ");
@@ -557,8 +557,8 @@ void dumpMemory() {
           else
           {
             // Oops ... something happened
-            Serial.print("Block ");Serial.print(currentblock, DEC);
-            Serial.println(" unable to read this block");
+            Serial.print(F("Block "));Serial.print(currentblock, DEC);
+            Serial.println(F(" unable to read this block"));
           }
         }
       }
