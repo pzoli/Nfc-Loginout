@@ -85,6 +85,8 @@ void loop() {
         cardRead();
       } else if (action == "cw") {
         cardWrite();
+      } else if (action == "ce") {
+        cardErase();
       } else if (action == "setup") {
         setupModeSwitch();
       } else if (action == "dump") {
@@ -372,8 +374,8 @@ void cardWrite() {
             blockBuffer[9] = 0x69;
             
             memcpy(blockBuffer + 10, newKey, sizeof(newKey));
-            nfc.mifareclassic_WriteDataBlock(7, blockBuffer);
-            if (true)
+            success = nfc.mifareclassic_WriteDataBlock(7, blockBuffer);
+            if (success)
             {
               #ifdef DEBUG
                 Serial.println(F("Trailer block:"));
@@ -401,6 +403,58 @@ void cardWrite() {
 }
 
 void writeSectorTrailer(uint8_t key[], uint8_t newKey[], uint8_t uid[], uint8_t uidLength) {
+}
+
+void cardErase(){
+  String ringUid;
+  uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0};  // Buffer to store the returned UID
+  uint8_t uidLength; // Length of the UID (4 or 7 bytes depending on ISO14443A card type
+  uint8_t success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength);
+  if (success) {
+    ringUid = charArrayToHex(uid,uidLength);
+    LoginParams params;
+    int idx = getCardInfoFromEEPROM(ringUid, params);
+    if (idx > -1) {
+      Serial.print(F("ringUID:"));
+      Serial.println(ringUid);
+      uint8_t key[6];
+      for(uint8_t i = 0; i<6; i++) {
+        key[i] = uint8_t(params.sectorpasswd[i]);
+      }
+      success = nfc.mifareclassic_AuthenticateBlock(uid, uidLength, 4, 0, key);
+      if (!success) {
+        Serial.println(F("CardErase: Sector passwd not authenticate for data block, try defaultKeyB"));
+        nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);//WORKAROUND
+        success = nfc.mifareclassic_AuthenticateBlock(uid, uidLength, 4, 0, defaultKeyB);
+      }
+      if (success) {
+          uint8_t data[16];
+          memset(data, 0, sizeof(data));
+          nfc.PrintHexChar(data, 16);
+          success = nfc.mifareclassic_WriteDataBlock (4, data);  
+
+          uint8_t sectorTrailerBlockIdx = BLOCK_NUMBER_OF_SECTOR_TRAILER(1);
+          uint8_t success = nfc.mifareclassic_AuthenticateBlock(uid, uidLength, sectorTrailerBlockIdx, 0, (uint8_t *)key);
+
+          uint8_t blockBuffer[16];
+          memset(blockBuffer, 0, sizeof(blockBuffer));
+          
+          memcpy(blockBuffer, defaultKeyB, sizeof(defaultKeyB));
+          memcpy(blockBuffer + 6, blankAccessBits, sizeof(blankAccessBits));
+          blockBuffer[9] = 0x69;
+          
+          memcpy(blockBuffer + 10, defaultKeyB, sizeof(defaultKeyB));
+          if (nfc.mifareclassic_WriteDataBlock(7, blockBuffer)) {
+            Serial.println(F("Card erase done"));
+          } else {
+            Serial.println(F("Card erase failed"));
+          }
+
+      } else {
+        Serial.println(F("Authenticatoin failed"));
+      }
+    }
+  }
 }
 
 void sendKeys(LoginParams &params, String passwd) {
