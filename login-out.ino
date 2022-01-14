@@ -61,10 +61,10 @@ void setup() {
 String request_line;
 bool cardSetupMode = false;
 // "w:0:system_name:w:a1b2c3d4:sectorpwd"
-
+// "a::system_name:g:d78ec561:sectorpwd"
 void loop() {
 
-  doLogInOut();    
+  doLogInOut();
 
   while (Serial.available()) {
     char request_char = Serial.read();
@@ -80,7 +80,14 @@ void loop() {
       if (action == "r") {
         eepromRead();
       } else if (action == "w") {
-        eepromWrite();
+        String targetIdx = getValue(request_line,':',1);
+        eepromWrite(targetIdx);
+      } else if (action == "d") {
+        eepromDelete();
+      } else if (action == "a") {
+        eepromAppend();
+      } else if (action == "count") {
+        getEEPROMCount();
       } else if (action == "cr") {
         cardRead();
       } else if (action == "cw") {
@@ -114,9 +121,9 @@ void doLogInOut() {
       int idx = getCardInfoFromEEPROM(ringUid, params);
       if (idx > -1) {
         #ifdef DEBUG
-          Serial.print(F("LogInOut: Card detected[idx="));
+          Serial.print(F("{\"function\":\"LogInOut\",\"action\":\"Card detected\",\"idx\":\""));
           Serial.print(idx);
-          Serial.println(F("]. Try authentication..."));
+          Serial.println(F("\"}"));
         #endif
         uint8_t key[6];
         for(uint8_t i = 0; i<6; i++) {
@@ -148,16 +155,17 @@ void doLogInOut() {
             }
             sendKeys(params, passwdString);
           } else {
-            Serial.println(F("LogInOut: Card read error!"));
+            Serial.println(F("{\"function\":\"LogInOut\",\"result\":\"false\",\"details\":\"Card read error\"}"));
             delay(1000);
           }
         } else {
-          Serial.println(F("LogInOut: authentication error at card read!"));
+          Serial.println(F("{\"function\":\"LogInOut\",\"result\":\"false\",\"details\":\"Authentication error at card read\"}"));
           delay(1000);
         }        
       } else {
-        Serial.println(ringUid);
-        Serial.println(F("LogInOut: card not registered."));
+        Serial.print(F("{\"function\":\"LogInOut\",\"result\":\"false\",\"details\":\"Card not registered\",\"uid\":\""));
+        Serial.print(ringUid);
+        Serial.println(F("\"}"));
         delay(3000);
       }
 
@@ -174,7 +182,13 @@ void setupModeSwitch() {
 
 void eepromRead() {
   String targetIdx = getValue(request_line,':',1);
-  int eeAddress = targetIdx.toInt() * sizeof(LoginParams);
+  uint8_t count;
+  EEPROM.get(0,count);
+  if ((targetIdx.toInt() >= count) || (targetIdx.toInt() < 0)) {
+    Serial.println(F("Index out of bounds"));
+    return;
+  }
+  int eeAddress = targetIdx.toInt() * sizeof(LoginParams) + 1;
   #ifdef DEBUG
     Serial.print(F("idx:"));
     Serial.println(targetIdx);
@@ -196,9 +210,14 @@ void eepromRead() {
   Serial.println(F("}"));
 }
 
-void eepromWrite() {
-  String targetIdx = getValue(request_line,':',1);
-  int eeAddress = targetIdx.toInt() * sizeof(LoginParams);
+void eepromWrite(String targetIdx) {
+  uint8_t count;
+  EEPROM.get(0,count);
+  if ((targetIdx.toInt() >= count) || (targetIdx.toInt() < 0)) {
+    Serial.println(F("Index out of bounds"));
+    return;
+  }
+  int eeAddress = targetIdx.toInt() * sizeof(LoginParams) + 1;
   #ifdef DEBUG
     Serial.print(F("idx:"));
     Serial.println(targetIdx);
@@ -209,11 +228,19 @@ void eepromWrite() {
   String targetNFCUID = getValue(request_line,':',4);
   String targetSectorPasswd = getValue(request_line,':',5);
   targetSysName.toCharArray(params.sysname, 33);
+  targetNFCUID.toCharArray(params.uid, 15);
+  
   if (targetPlatform.length()>0) {
     params.platform = targetPlatform[0];
   }
-  targetNFCUID.toCharArray(params.uid, 15);
-  targetSectorPasswd.toCharArray(params.sectorpasswd, 7);
+  if (targetSectorPasswd.length()>0) {
+    targetSectorPasswd.toCharArray(params.sectorpasswd, 7);
+  } else {
+    for(uint8_t i = 0; i < 7; i++) {
+      params.sectorpasswd[i] = (defaultKeyB[i]);
+    }
+  }
+  
   #ifdef DEBUG
     Serial.print(F("targetSysName:"));
     Serial.println(targetSysName);
@@ -234,9 +261,52 @@ void eepromWrite() {
     Serial.print(F("UID:"));
     Serial.println(params.uid);
     Serial.print(F("SectorPassword:"));
-    Serial.println(params.sectorpasswd);
+    if (targetSectorPasswd.length()>0) {
+      Serial.println(params.sectorpasswd);
+    } else {
+      nfc.PrintHexChar(params.sectorpasswd,6);
+    }
   #endif
   EEPROM.put(eeAddress, params);
+  Serial.println(F("{\"action\":\"eeprom-write\",\"result\":\"done\"}"));
+}
+
+void eepromDelete() {
+  uint8_t count;
+  EEPROM.get(0,count);
+  String targetIdx = getValue(request_line,':',1);
+  LoginParams params;
+  if ((targetIdx.toInt() == count-1) || (count == 1)) {
+    EEPROM.put(0, uint8_t(count-1));  
+  } else if ((targetIdx.toInt() >= count) || (targetIdx.toInt() < 0)) {
+    Serial.print(F("{\"action\":\"eeprom-write\",\"result\":\"Index out of bounds\"}"));
+    return;
+  } else if (targetIdx.toInt() < count-1) {
+      int eeAddress = targetIdx.toInt() * sizeof(LoginParams) + 1;
+      int lastAddress = (count -1) * sizeof(LoginParams) + 1;
+      EEPROM.get(lastAddress,params);
+      EEPROM.put(eeAddress,params);
+      EEPROM.put(0, uint8_t(count -1));
+  }
+  Serial.println(F("{\"action\":\"eeprom-delete\",\"result\":\"done\"}"));
+}
+
+void eepromAppend() {
+  uint8_t count;
+  EEPROM.get(0,count);
+  EEPROM.put(0, uint8_t(count+1));
+  int eeAddress = count * sizeof(LoginParams) + 1;
+  LoginParams params;
+  EEPROM.put(eeAddress,params);
+  eepromWrite(String(count));
+}
+
+void getEEPROMCount() {
+  uint8_t count;
+  EEPROM.get(0,count);
+  Serial.print("{\"action\":\"eeprom-readcount\",\"result\":\"");
+  Serial.print(count);
+  Serial.println("\"}");
 }
 
 void cardRead() {
@@ -382,7 +452,7 @@ void cardWrite() {
                 nfc.PrintHexChar(blockBuffer, 16);
               #endif
               newSectorPasswd.toCharArray(params.sectorpasswd, 7);
-              int eeAddress = idx * sizeof(LoginParams);
+              int eeAddress = idx * sizeof(LoginParams) + 1;
               EEPROM.put(eeAddress, params);
             } else {
               Serial.print(F("Unable to write trailer block of sector"));
@@ -400,9 +470,6 @@ void cardWrite() {
   } else {
     Serial.println(F("Card not fouund"));
   }
-}
-
-void writeSectorTrailer(uint8_t key[], uint8_t newKey[], uint8_t uid[], uint8_t uidLength) {
 }
 
 void cardErase(){
@@ -466,7 +533,7 @@ void sendKeys(LoginParams &params, String passwd) {
     Serial.print(F(")"));
     Serial.println(params.platform);
   #endif
-  if (String("g").indexOf(params.platform) == 0) {
+  if ((String("g").indexOf(params.platform) == 0) || String("k").indexOf(params.platform) == 0) {
     Keyboard.press(KEY_LEFT_GUI);
     Keyboard.press('l');
   } else {
@@ -486,15 +553,17 @@ void sendKeys(LoginParams &params, String passwd) {
 }
 
 int getCardInfoFromEEPROM(String ringUid, LoginParams &p) {
-    int idx = -1;
-    for(int i = 0; i < 16; i++) {
-      EEPROM.get(i * sizeof(LoginParams), p);
-      if (ringUid.indexOf(p.uid) == 0) {
-        idx = i;
-        break;
-      }
+  uint8_t count;
+  EEPROM.get(0,count);
+  int idx = -1;
+  for(int i = 0; i < count; i++) {
+    EEPROM.get(i * sizeof(LoginParams) +1, p);
+    if (ringUid.indexOf(p.uid) == 0) {
+      idx = i;
+      break;
     }
-    return idx;
+  }
+  return idx;
 }
 
 String charArrayToHex(uint8_t uid[], byte uidLength) {
