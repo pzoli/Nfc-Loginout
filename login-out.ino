@@ -86,6 +86,8 @@ void loop() {
         eepromDelete();
       } else if (action == "a") {
         eepromAppend();
+      } else if (action == "l") {
+        eepromList();
       } else if (action == "count") {
         getEEPROMCount();
       } else if (action == "cr") {
@@ -120,11 +122,12 @@ void doLogInOut() {
       LoginParams params;
       int idx = getCardInfoFromEEPROM(ringUid, params);
       if (idx > -1) {
-        #ifdef DEBUG
-          Serial.print(F("{\"function\":\"LogInOut\",\"action\":\"Card detected\",\"idx\":\""));
-          Serial.print(idx);
-          Serial.println(F("\"}"));
-        #endif
+        Serial.print(F("{\"function\":\"LogInOut\",\"action\":\"Card detected\",\"idx\":\""));
+        Serial.print(idx);
+        Serial.print(F("\",\"uid\":\""));
+        Serial.print(ringUid);
+        Serial.println(F("\"}"));
+
         uint8_t key[6];
         for(uint8_t i = 0; i<6; i++) {
           key[i] = uint8_t(params.sectorpasswd[i]);
@@ -299,6 +302,31 @@ void eepromAppend() {
   LoginParams params;
   EEPROM.put(eeAddress,params);
   eepromWrite(String(count));
+}
+
+void eepromList() {
+  uint8_t count;
+  EEPROM.get(0,count);
+  Serial.print("[");
+  LoginParams params;
+  for(uint8_t i = 0; i < count; i++) {
+    int eeAddress = i * sizeof(LoginParams) + 1;
+    EEPROM.get(eeAddress, params);
+    Serial.print(F("{\"idx\":\""));
+    Serial.print(i);
+    Serial.print(F("\",\"sysname\":\""));
+    Serial.print(params.sysname);
+    Serial.print(F("\",\"platform\":\""));
+    Serial.print(params.platform);
+    Serial.print(F("\",\"uid\":\""));
+    Serial.print(params.uid);
+    Serial.print(F("\""));
+    Serial.print(F("}"));
+    if (i<count-1){
+      Serial.print(F(","));
+    }
+  }
+  Serial.println("]");
 }
 
 void getEEPROMCount() {
