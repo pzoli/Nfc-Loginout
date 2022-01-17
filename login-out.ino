@@ -597,7 +597,10 @@ int getCardInfoFromEEPROM(String ringUid, LoginParams &p) {
 String charArrayToHex(uint8_t uid[], byte uidLength) {
   String result;
   for (uint8_t i=0; i < uidLength; i++){
-      result += String(uid[i], HEX);
+    if(uid[i] < 0x10) {
+      result += '0';
+    }
+    result += String(uid[i], HEX);
   }
   return result; 
 }
