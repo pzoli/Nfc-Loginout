@@ -28,7 +28,7 @@ struct LoginParams {
   char sectorpasswd[7];
 };
 
-#define DEBUG;
+//#define DEBUG;
 
 const uint8_t defaultKeyA[6] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 const uint8_t defaultKeyB[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
@@ -81,7 +81,7 @@ void loop() {
         eepromRead();
       } else if (action == "w") {
         String targetIdx = getValue(request_line,':',1);
-        eepromWrite(targetIdx);
+        eepromWrite(targetIdx,false);
       } else if (action == "d") {
         eepromDelete();
       } else if (action == "a") {
@@ -188,7 +188,7 @@ void eepromRead() {
   uint8_t count;
   EEPROM.get(0,count);
   if ((targetIdx.toInt() >= count) || (targetIdx.toInt() < 0)) {
-    Serial.println(F("Index out of bounds"));
+    Serial.print(F("{\"action\":\"eeprom-read\",\"result\":\"Index out of bounds\"}"));
     return;
   }
   int eeAddress = targetIdx.toInt() * sizeof(LoginParams) + 1;
@@ -213,7 +213,7 @@ void eepromRead() {
   Serial.println(F("}"));
 }
 
-void eepromWrite(String targetIdx) {
+void eepromWrite(String targetIdx, boolean setEmptyPasswd) {
   uint8_t count;
   EEPROM.get(0,count);
   if ((targetIdx.toInt() >= count) || (targetIdx.toInt() < 0)) {
@@ -238,10 +238,18 @@ void eepromWrite(String targetIdx) {
   }
   if (targetSectorPasswd.length()>0) {
     targetSectorPasswd.toCharArray(params.sectorpasswd, 7);
-  } else {
+  } else if (setEmptyPasswd) {
     for(uint8_t i = 0; i < 7; i++) {
       params.sectorpasswd[i] = (defaultKeyB[i]);
     }
+  } else {
+    LoginParams oldParams;
+    if (getCardInfoFromEEPROM(targetNFCUID, oldParams) > -1) {
+      for(uint8_t i = 0; i < 7; i++) {
+        params.sectorpasswd[i] = (oldParams.sectorpasswd[i]);
+      }
+    }
+    
   }
   
   #ifdef DEBUG
@@ -301,7 +309,7 @@ void eepromAppend() {
   int eeAddress = count * sizeof(LoginParams) + 1;
   LoginParams params;
   EEPROM.put(eeAddress,params);
-  eepromWrite(String(count));
+  eepromWrite(String(count),true);
 }
 
 void eepromList() {
@@ -338,56 +346,62 @@ void getEEPROMCount() {
 }
 
 void cardRead() {
-  String ringUid;
-  uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0};  // Buffer to store the returned UID
-  uint8_t uidLength; // Length of the UID (4 or 7 bytes depending on ISO14443A card type
-  uint8_t success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength);
-  if (success) {
-    ringUid = charArrayToHex(uid,uidLength);
-    Serial.print(F("ringUID:"));
-    Serial.println(ringUid);
-    LoginParams params;
-    int idx = getCardInfoFromEEPROM(ringUid, params);
-    if (idx > -1) {
-      uint8_t key[6];
-      for(uint8_t i = 0; i<6; i++) {
-        key[i] = uint8_t(params.sectorpasswd[i]);
-      }
-      success = nfc.mifareclassic_AuthenticateBlock(uid, uidLength, 4, 0, key);
-      if (!success) {
-        Serial.println(F("CardREAD: KeyA sector passwd not authenticate. Try defaultKeyB"));
-        nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);//WORKAROUND
-        success = nfc.mifareclassic_AuthenticateBlock(uid, uidLength, 4, 0, defaultKeyB);
-      }
-      if (success) {
-          uint8_t data[16];
-          success = nfc.mifareclassic_ReadDataBlock(4, data);
-          if (success) {
-            Serial.println(F("Reading Block 4:"));
-            nfc.PrintHexChar(data, 16);
-            Serial.println("");
-          } else {
-            Serial.println(F("Unable to read the requested data block"));
-          }
-
-          success = nfc.mifareclassic_ReadDataBlock(7, data);
-          if (success) {
-            Serial.println(F("Reading Block 7:"));
-            nfc.PrintHexChar(data, 16);
-            Serial.println("");
-          } else {
-            Serial.println(F("Unable to read the requested trailer block"));
-          }
-
+  #ifdef DEBUG
+    String ringUid;
+    uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0};  // Buffer to store the returned UID
+    uint8_t uidLength; // Length of the UID (4 or 7 bytes depending on ISO14443A card type
+    uint8_t success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength);
+    if (success) {
+      ringUid = charArrayToHex(uid,uidLength);
+      Serial.print(F("ringUID:"));
+      Serial.println(ringUid); 
+      LoginParams params;
+      int idx = getCardInfoFromEEPROM(ringUid, params);
+      if (idx > -1) {
+        uint8_t key[6];
+        for(uint8_t i = 0; i<6; i++) {
+          key[i] = uint8_t(params.sectorpasswd[i]);
+        }
+        success = nfc.mifareclassic_AuthenticateBlock(uid, uidLength, 4, 0, key);
+        if (!success) {
+          #ifdef DEBUG
+            Serial.println(F("CardREAD: KeyA sector passwd not authenticate. Try defaultKeyB"));
+          #endif
+          nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);//WORKAROUND
+          success = nfc.mifareclassic_AuthenticateBlock(uid, uidLength, 4, 0, defaultKeyB);
+        }
+        if (success) {
+            uint8_t data[16];
+            success = nfc.mifareclassic_ReadDataBlock(4, data);
+            if (success) {
+              Serial.println(F("Reading Block 4:"));
+              nfc.PrintHexChar(data, 16);
+              Serial.println("");
+            } else {
+              Serial.println(F("Unable to read the requested data block"));
+            }
+  
+            success = nfc.mifareclassic_ReadDataBlock(7, data);
+            if (success) {
+              Serial.println(F("Reading Block 7:"));
+              nfc.PrintHexChar(data, 16);
+              Serial.println("");
+            } else {
+              Serial.println(F("Unable to read the requested trailer block"));
+            }
+  
+        } else {
+          Serial.println(F("Authenticatoin failed"));
+        }
       } else {
-        Serial.println(F("Authenticatoin failed"));
+        Serial.println(F("uid not found"));
       }
     } else {
-      Serial.println(F("uid not found"));
+      Serial.println(F("Card not fouund"));
     }
-  } else {
-    Serial.println(F("Card not fouund"));
-  }        
+  #else
+    Serial.println("{\"action\":\"card-read\",\"result\":\"false\",\"details\":\"Function allowed only for debug\"}");
+  #endif
 }
 
 void cardWrite() {
@@ -400,8 +414,10 @@ void cardWrite() {
     LoginParams params;
     int idx = getCardInfoFromEEPROM(ringUid, params);
     if (idx > -1) {
-      Serial.print(F("ringUID:"));
-      Serial.println(ringUid);
+      #ifdef DEBUG
+        Serial.print(F("ringUID:"));
+        Serial.println(ringUid);
+      #endif
       uint8_t key[6];
       for(uint8_t i = 0; i<6; i++) {
         key[i] = uint8_t(params.sectorpasswd[i]);
@@ -458,7 +474,9 @@ void cardWrite() {
           uint8_t success = nfc.mifareclassic_AuthenticateBlock(uid, uidLength, sectorTrailerBlockIdx, 0, (uint8_t *)key);
         
           if (!success) {
-            Serial.println("CardWrite: KeyA not authenticate, try default Sector password");
+            #ifdef DEBUG
+              Serial.println("CardWrite: KeyA not authenticate, try default Sector password");
+            #endif
             nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);//WORKAROUND
             success = nfc.mifareclassic_AuthenticateBlock(uid, uidLength, sectorTrailerBlockIdx, 0, (uint8_t *)defaultKeyB);
           }
@@ -483,20 +501,20 @@ void cardWrite() {
               int eeAddress = idx * sizeof(LoginParams) + 1;
               EEPROM.put(eeAddress, params);
             } else {
-              Serial.print(F("Unable to write trailer block of sector"));
+              Serial.println("{\"action\":\"card-write\",\"result\":\"false\",\"details\":\"Unable to write trailer block of sector\"}");
             }
           }  
         }
-        
+        Serial.println("{\"action\":\"card-write\",\"result\":\"true\",\"details\":\"Card write done\"}");
       } else {
-        Serial.println(F("Authenticatoin failed"));
+        Serial.println("{\"action\":\"card-write\",\"result\":\"false\",\"details\":\"Sector authenticatoin failed\"}");
       }
     } else {
-      Serial.println(F("uid not found"));
+      Serial.println("{\"action\":\"card-write\",\"result\":\"false\",\"details\":\"Uid not found\"}");
     }
 
   } else {
-    Serial.println(F("Card not fouund"));
+    Serial.println("{\"action\":\"card-write\",\"result\":\"false\",\"details\":\"Card for read not found\"}");
   }
 }
 
@@ -510,8 +528,10 @@ void cardErase(){
     LoginParams params;
     int idx = getCardInfoFromEEPROM(ringUid, params);
     if (idx > -1) {
-      Serial.print(F("ringUID:"));
-      Serial.println(ringUid);
+      #ifdef DEBUG
+        Serial.print(F("ringUID:"));
+        Serial.println(ringUid);
+      #endif
       uint8_t key[6];
       for(uint8_t i = 0; i<6; i++) {
         key[i] = uint8_t(params.sectorpasswd[i]);
@@ -525,7 +545,9 @@ void cardErase(){
       if (success) {
           uint8_t data[16];
           memset(data, 0, sizeof(data));
-          nfc.PrintHexChar(data, 16);
+          #ifdef DEBUG
+            nfc.PrintHexChar(data, 16);
+          #endif
           success = nfc.mifareclassic_WriteDataBlock (4, data);  
 
           uint8_t sectorTrailerBlockIdx = BLOCK_NUMBER_OF_SECTOR_TRAILER(1);
@@ -540,13 +562,12 @@ void cardErase(){
           
           memcpy(blockBuffer + 10, defaultKeyB, sizeof(defaultKeyB));
           if (nfc.mifareclassic_WriteDataBlock(7, blockBuffer)) {
-            Serial.println(F("Card erase done"));
+            Serial.println("{\"action\":\"card-erase\",\"result\":\"true\",\"details\":\"Card erase done\"}");
           } else {
-            Serial.println(F("Card erase failed"));
+            Serial.println("{\"action\":\"card-erase\",\"result\":\"false\",\"details\":\"Sector write failed\"}");
           }
-
       } else {
-        Serial.println(F("Authenticatoin failed"));
+        Serial.println("{\"action\":\"card-erase\",\"result\":\"false\",\"details\":\"Sector authenticatoin failed\"}");
       }
     }
   }
@@ -562,8 +583,11 @@ void sendKeys(LoginParams &params, String passwd) {
     Serial.println(params.platform);
   #endif
   if ((String("g").indexOf(params.platform) == 0) || String("k").indexOf(params.platform) == 0) {
-    Keyboard.press(KEY_LEFT_GUI);
-    Keyboard.press('l');
+    //Keyboard.press(KEY_LEFT_GUI);
+    //Keyboard.press('l');
+    Keyboard.press(KEY_RETURN);
+  } else if (String("t").indexOf(params.platform) == 0) {
+    //Terminal not require key prefix
   } else {
     Keyboard.press(KEY_LEFT_CTRL);
     Keyboard.press(KEY_LEFT_ALT);
@@ -623,12 +647,12 @@ String getValue(String data, char separator, int index) {
 }
 
 void dumpMemory() {
-  uint8_t success;                          // Flag to check if there was an error with the PN532
-  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
-  uint8_t uidLength;                        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
-  uint8_t currentblock;                     // Counter to keep track of which block we're on
-  bool authenticated = false;               // Flag to indicate if the sector is authenticated
-  uint8_t data[16];                         // Array to store block data during reads
+  uint8_t success;
+  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };
+  uint8_t uidLength;
+  uint8_t currentblock;
+  bool authenticated = false;
+  uint8_t data[16];
 
   // Keyb on NDEF and Mifare Classic should be the same
   uint8_t keyuniversal[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
@@ -646,31 +670,21 @@ void dumpMemory() {
 
     if (uidLength == 4)
     {
-      // We probably have a Mifare Classic card ...
       Serial.println("Seems to be a Mifare Classic card (4 byte UID)");
 
       for (currentblock = 0; currentblock < 64; currentblock++)
       {
-        // Check if this is a new block so that we can reauthenticate
         if (nfc.mifareclassic_IsFirstBlock(currentblock)) authenticated = false;
       
-        // If the sector hasn't been authenticated, do so first
         if (!authenticated)
         {
-          // Starting of a new sector ... try to to authenticate
           Serial.print(F("------------------------Sector "));Serial.print(currentblock/4, DEC);Serial.println(F("-------------------------"));
           if (currentblock == 0)
           {
-              // This will be 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF for Mifare Classic (non-NDEF!)
-              // or 0xA0 0xA1 0xA2 0xA3 0xA4 0xA5 for NDEF formatted cards using key a,
-              // but keyb should be the same for both (0xFF 0xFF 0xFF 0xFF 0xFF 0xFF)
               success = nfc.mifareclassic_AuthenticateBlock (uid, uidLength, currentblock, 1, keyuniversal);
           }
           else
           {
-              // This will be 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF for Mifare Classic (non-NDEF!)
-              // or 0xD3 0xF7 0xD3 0xF7 0xD3 0xF7 for NDEF formatted cards using key a,
-              // but keyb should be the same for both (0xFF 0xFF 0xFF 0xFF 0xFF 0xFF)
               success = nfc.mifareclassic_AuthenticateBlock (uid, uidLength, currentblock, 1, keyuniversal);
           }
           if (success)
@@ -683,19 +697,15 @@ void dumpMemory() {
             success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength); //WORKAROUND
           }
         }
-        // If we're still not authenticated just skip the block
         if (!authenticated)
         {
           Serial.print(F("Block "));Serial.print(currentblock, DEC);Serial.println(F(" unable to authenticate"));
         }
         else
         {
-          // Authenticated ... we should be able to read the block now
-          // Dump the data into the 'data' array
           success = nfc.mifareclassic_ReadDataBlock(currentblock, data);
           if (success)
           {
-            // Read successful
             Serial.print(F("Block "));Serial.print(currentblock, DEC);
             if (currentblock < 10)
             {
@@ -705,12 +715,10 @@ void dumpMemory() {
             {
               Serial.print(" ");
             }
-            // Dump the raw data
             nfc.PrintHexChar(data, 16);
           }
           else
           {
-            // Oops ... something happened
             Serial.print(F("Block "));Serial.print(currentblock, DEC);
             Serial.println(F(" unable to read this block"));
           }
